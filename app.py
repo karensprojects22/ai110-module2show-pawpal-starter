@@ -47,6 +47,7 @@ st.divider()
 if "owner" not in st.session_state:
     st.session_state.owner = Owner("Jordan", available_minutes_per_day=120)
 owner: Owner = st.session_state.owner
+scheduler = Scheduler(owner)  # cheap to build; reads the owner's pets and tasks each run
 
 st.subheader("Owner")
 owner.name = st.text_input("Owner name", value=owner.name)
@@ -129,7 +130,7 @@ if owner.pets:
 else:
     st.info("Add a pet before adding tasks.")
 
-pending = owner.filter_tasks(completed=False)
+pending = scheduler.sort_by_time(owner.filter_tasks(completed=False))
 if pending:
     task_id = st.selectbox(
         "Mark a task complete",
@@ -171,11 +172,16 @@ if owner.get_all_tasks():
                 "Due": task.due_date.isoformat() if task.due_date else "",
                 "Done": "yes" if task.last_completed else "no",
             }
-            for task in Scheduler(owner).sort_by_time(shown)
+            for task in scheduler.sort_by_time(shown)
         ]
     )
 elif owner.pets:
     st.info("No tasks yet. Add one above.")
+
+# Warn about clashing preferred times as soon as they exist, before a plan is built.
+due_today = [t for t in pending if t.is_due(date.today())]
+for warning in scheduler.conflict_warnings(due_today):
+    st.warning(f"Time conflict: {warning}")
 
 st.divider()
 
@@ -183,7 +189,12 @@ st.subheader("Build Schedule")
 st.caption("Plans every pet's due tasks for today within your available time.")
 
 if st.button("Generate schedule"):
-    plan = Scheduler(owner).generate_plan(date.today())
+    st.session_state.show_plan = True
+
+# Rebuilt on every run once requested, so the plan stays visible and never goes stale
+# when other widgets change.
+if st.session_state.get("show_plan"):
+    plan = scheduler.generate_plan(date.today())
 
     if plan.scheduled_items:
         st.success(
@@ -199,8 +210,14 @@ if st.button("Generate schedule"):
     else:
         st.warning("Nothing to schedule. Add a pet and some tasks first.")
 
-    for warning in plan.warnings:
-        st.warning(f"Time conflict: {warning}. Moved one to the nearest free slot.")
+    if plan.warnings:
+        st.info(
+            f"{len(plan.warnings)} time conflict(s) were resolved by moving the "
+            "lower-ranked task to the nearest free slot."
+        )
 
     for skipped in plan.skipped_tasks:
         st.warning(f"Skipped {skipped.task.title}: {skipped.reason}")
+
+    with st.expander("Why this plan?"):
+        st.text(plan.get_explanation())
