@@ -9,6 +9,11 @@ def _new_id() -> str:
     return uuid4().hex
 
 
+def _check_duration(minutes: int) -> None:
+    if minutes <= 0:
+        raise ValueError(f"Task duration must be at least 1 minute, got {minutes}")
+
+
 def _to_minutes(t: time) -> int:
     return t.hour * 60 + t.minute
 
@@ -48,6 +53,10 @@ class Task:
     id: str = field(default_factory=_new_id)
     # Back-reference set by Pet.add_task so a recurring task can queue its own successor.
     _pet: Optional["Pet"] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Reject a duration that is not a positive number of minutes."""
+        _check_duration(self.duration_minutes)
 
     def mark_complete(self, on_date: date) -> Optional["Task"]:
         """Record completion; a daily or weekly task also queues its next occurrence.
@@ -145,6 +154,8 @@ class Pet:
         for key, value in changes.items():
             if key in ("id", "pet_id") or not hasattr(task, key):
                 raise AttributeError(f"Cannot edit task field {key!r}")
+            if key == "duration_minutes":
+                _check_duration(value)
             setattr(task, key, value)
 
     def get_tasks(self, completed: Optional[bool] = None) -> list[Task]:
@@ -170,6 +181,11 @@ class Owner:
     day_end: time = time(20, 0)
     preferences: dict = field(default_factory=dict)
     pets: list[Pet] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Reject a negative daily time budget."""
+        if self.available_minutes_per_day < 0:
+            raise ValueError("Availability cannot be negative")
 
     def add_pet(self, pet: Pet) -> None:
         """Add a pet to this owner, ignoring one that is already added."""
@@ -283,29 +299,45 @@ class Scheduler:
         self.constraints = constraints or {}
 
     def generate_plan(self, on_date: date) -> DailyPlan:
-        """Build the day's plan from every pet's due tasks within time limits."""
+        """Build the day's plan from every pet's due tasks within time limits.
+
+        Tasks are taken in priority order. Each one must fit both the remaining
+        daily minutes and a free slot in the day window. Minutes are spent only
+        when a task is actually placed, so a task that cannot be placed never uses
+        up budget that a smaller, lower-priority task could have had. Every task
+        that is left out is recorded with the reason.
+        """
         plan = DailyPlan(on_date)
         due = [t for t in self.owner.get_all_tasks() if t.is_due(on_date)]
-        fitting, skipped = self.fit_to_time_budget(self.sort_tasks(due))
-        plan.skipped_tasks.extend(skipped)
-        plan.warnings.extend(self.conflict_warnings(fitting))
-
+        remaining = self.owner.available_minutes_per_day
         window_start = _to_minutes(self.owner.day_start)
         window_end = _to_minutes(self.owner.day_end)
         busy: list[tuple[int, int]] = []  # (start, end) in minutes, kept sorted
+        placed: list[Task] = []
 
-        for task in fitting:
+        for task in self.sort_tasks(due):
+            if task.duration_minutes > remaining:
+                plan.skipped_tasks.append(SkippedTask(
+                    task,
+                    f"Needs {task.duration_minutes} min but only {remaining} min "
+                    "of the daily budget was left",
+                ))
+                continue
             start, reason = self._place(task, busy, window_start, window_end)
             if start is None:
-                plan.skipped_tasks.append(
-                    SkippedTask(task, "No free slot left between "
-                                f"{self.owner.day_start:%H:%M} and {self.owner.day_end:%H:%M}")
-                )
+                plan.skipped_tasks.append(SkippedTask(
+                    task,
+                    f"No free slot left between {self.owner.day_start:%H:%M} "
+                    f"and {self.owner.day_end:%H:%M}",
+                ))
                 continue
+            remaining -= task.duration_minutes
             busy.append((start, start + task.duration_minutes))
             busy.sort()
+            placed.append(task)
             plan.add_item(task, _to_time(start), reason)
 
+        plan.warnings.extend(self.conflict_warnings(placed))
         plan.scheduled_items.sort(key=lambda item: item.start)
         return plan
 
@@ -363,25 +395,6 @@ class Scheduler:
         pet = self.owner.find_pet(task.pet_id)
         owner_part = f" ({pet.name})" if pet else ""
         return f"{task.title}{owner_part} at {task.preferred_time:%H:%M}"
-
-    def fit_to_time_budget(
-        self, tasks: list[Task]
-    ) -> tuple[list[Task], list[SkippedTask]]:
-        """Split tasks into those within the daily minutes budget and skipped ones."""
-        remaining = self.owner.available_minutes_per_day
-        fitting: list[Task] = []
-        skipped: list[SkippedTask] = []
-        for task in tasks:
-            if task.duration_minutes <= remaining:
-                fitting.append(task)
-                remaining -= task.duration_minutes
-            else:
-                skipped.append(SkippedTask(
-                    task,
-                    f"Needs {task.duration_minutes} min but only {remaining} min "
-                    "of the daily budget was left",
-                ))
-        return fitting, skipped
 
     def detect_conflicts(self, items: list[ScheduledItem]) -> list[tuple[Task, Task]]:
         """Return pairs of tasks whose scheduled times overlap.

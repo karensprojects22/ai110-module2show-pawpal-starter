@@ -1,8 +1,7 @@
 """Edge-case tests for sorting, recurring tasks and scheduler limits.
 
-Grouped by risk area. Tests marked xfail(strict=True) document known bugs: they
-pass the suite while the bug exists and fail loudly once it is fixed, which is the
-cue to delete the marker.
+Grouped by risk area: sorting, recurring tasks, scheduler limits, and budget
+accounting plus input validation.
 """
 from datetime import date, time, timedelta
 
@@ -251,22 +250,79 @@ def test_many_tasks_wanting_the_same_time_never_overlap_or_leave_the_window():
     assert len(plan.warnings) == 28  # every one of the 28 pairs shares 10:00
 
 
-# --- Known bugs (strict xfail) ---------------------------------------------------
+# --- Budget accounting and input validation --------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "fit_to_time_budget spends minutes before placement, so a task that cannot be "
-    "placed still uses budget and blocks a smaller task that would fit"))
 def test_unplaceable_task_does_not_consume_budget():
     owner, pet = make_owner(budget=100, start=time(8, 0), end=time(9, 0))
     pet.add_task(Task("A", "x", 50, Priority.HIGH))
     pet.add_task(Task("B", "x", 50, Priority.MEDIUM))  # fits budget, no slot left
-    pet.add_task(Task("C", "x", 10, Priority.LOW))     # would fit the last 10 min
+    pet.add_task(Task("C", "x", 10, Priority.LOW))     # fits the last 10 minutes
 
-    assert set(titles(Scheduler(owner).generate_plan(TODAY))) == {"A", "C"}
+    plan = Scheduler(owner).generate_plan(TODAY)
+
+    assert set(titles(plan)) == {"A", "C"}
+    assert [s.task.title for s in plan.skipped_tasks] == ["B"]
+    assert "No free slot" in plan.skipped_tasks[0].reason
 
 
-@pytest.mark.xfail(strict=True, reason="Task does not validate duration_minutes")
-def test_non_positive_duration_is_rejected():
+def test_scheduled_minutes_never_exceed_the_budget():
+    owner, pet = make_owner(budget=70)
+    for n, minutes in enumerate((30, 25, 20, 15, 10)):
+        pet.add_task(Task(f"T{n}", "x", minutes, Priority.MEDIUM))
+
+    plan = Scheduler(owner).generate_plan(TODAY)
+
+    assert plan.total_duration() <= 70
+    assert plan.total_duration() == 70  # 30 + 25 + 15 fills it exactly
+
+
+def test_over_budget_task_is_skipped_but_a_smaller_one_still_fits():
+    owner, pet = make_owner(budget=40)
+    pet.add_task(Task("Big", "x", 35, Priority.HIGH))
+    pet.add_task(Task("Huge", "x", 30, Priority.MEDIUM))  # only 5 min left: skipped
+    pet.add_task(Task("Tiny", "x", 5, Priority.LOW))
+
+    plan = Scheduler(owner).generate_plan(TODAY)
+
+    assert set(titles(plan)) == {"Big", "Tiny"}
+    assert "budget" in plan.skipped_tasks[0].reason
+
+
+@pytest.mark.parametrize("minutes", [0, -1, -20])
+def test_non_positive_duration_is_rejected(minutes):
     with pytest.raises(ValueError):
-        Task("Backwards", "x", -20)
+        Task("Backwards", "x", minutes)
+
+
+def test_one_minute_duration_is_allowed():
+    assert Task("Quick", "x", 1).duration_minutes == 1
+
+
+@pytest.mark.parametrize("minutes", [0, -5])
+def test_editing_a_task_to_a_non_positive_duration_is_rejected(minutes):
+    owner, pet = make_owner()
+    task = Task("Walk", "walk", 30)
+    pet.add_task(task)
+
+    with pytest.raises(ValueError):
+        pet.edit_task(task.id, duration_minutes=minutes)
+
+    assert task.duration_minutes == 30
+
+
+def test_recurring_copy_keeps_a_valid_duration():
+    owner, pet = make_owner()
+    task = Task("Walk", "walk", 30, recurrence=Recurrence.DAILY)
+    pet.add_task(task)
+
+    assert task.mark_complete(TODAY).duration_minutes == 30
+
+
+def test_negative_budget_is_rejected_at_construction_and_by_setter():
+    with pytest.raises(ValueError):
+        Owner("Sam", available_minutes_per_day=-1)
+    owner = Owner("Sam", available_minutes_per_day=10)
+    with pytest.raises(ValueError):
+        owner.set_availability(-1)
+    assert owner.available_minutes_per_day == 10
