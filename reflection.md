@@ -46,6 +46,16 @@ Yes. After reviewing my skeleton I found several gaps and changed the design bef
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+**Tradeoff: the scheduler warns about time conflicts and fixes them itself, based only on preferred times.**
+
+- **What it does.** `Scheduler.conflict_warnings` compares the time span of each task that has a `preferred_time` (start to start plus duration), so a 30-minute walk at 08:00 conflicts with a task at 08:15, not just one at exactly 08:00. It returns a warning message and never raises an error. `generate_plan` then keeps both tasks and moves the lower-ranked one to the nearest free slot, so the final plan never has overlapping tasks.
+- **What it gives up.**
+  - Only tasks with a preferred time can conflict. A task with no time is simply placed in a gap, so it is never reported.
+  - The owner isn't asked which task should win. Priority decides, then the shorter task, and the loser can end up away from the time they wanted. It can even be skipped if the day is full.
+  - The scheduler is fixed to one owner's single timeline. It doesn't model two things happening at once, such as walking two pets together, and flags them as a conflict.
+- **Why it is reasonable.** Pet-care times are mostly preferences, not appointments. A walk at 08:10 instead of 08:00 rarely matters, so a plan that always works and tells the owner what it moved is more useful than one that stops with an error or demands a decision for every clash. The warning keeps the owner informed, and the reason shown beside each moved task explains why it moved. I also kept the check small, a sort plus one pass, so it is easy to read and test.
+- **What I'd change with more time.** Add a way to mark a task as fixed (a vet visit or medication at a set time) so it never moves, and let the owner choose which task yields.
+
 ---
 
 ## 3. AI Collaboration
@@ -55,10 +65,33 @@ Yes. After reviewing my skeleton I found several gaps and changed the design bef
 - How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
 - What kinds of prompts or questions were most helpful?
 
+I used AI at every stage, in roughly this order:
+
+- **Design brainstorming.** I asked for the main objects with their attributes and methods, and it proposed `Owner`, `Pet`, `Task`, `Scheduler` and `DailyPlan`. It also suggested making walking and feeding `Task` objects rather than pet actions.
+- **Drafting.** I asked it to turn that into a Mermaid class diagram, then into dataclass stubs, then to fill in the logic, the demo script and the tests.
+- **Design review.** I asked it to review my own skeleton for missing relationships and logic bottlenecks. This was the most useful prompt, because it found real flaws before any logic existed.
+- **Documentation.** It drafted the docstrings, the README sections and the reflection text. I edit them so they match what I built.
+
+The most helpful prompts were specific and gave it something concrete to check, such as "review my skeleton" or "how should the Scheduler retrieve all tasks from the Owner's pets?". Open requests like "brainstorm the objects" gave a starting point that I still had to question.
+
 **b. Judgment and verification**
 
 - Describe one moment where you did not accept an AI suggestion as-is.
 - How did you evaluate or verify what the AI suggested?
+
+**What the AI suggested, and what I accepted or rejected.** The review of my skeleton produced a list of problems in three groups: missing relationships, logic gaps, and smaller cleanups plus a bottleneck note. I accepted the first two groups and left the rest out:
+
+- Accepted: tasks linked to their pet, task ids with identity-based equality, removing the circular `Owner.create_plan`, replacing `completed` with `last_completed` and `due_date`, a day window on `Owner`, scheduler results that keep reasons, and one source for the explanation.
+- Not taken: the smaller cleanups (renaming `DailyPlan.date`, dropping `priority_score`, changing `get_tasks` to a status enum) and the idea of a `required` flag so medication is never skipped. They didn't block the requirements, so I kept the scope smaller. The `required` flag is the one I'd add first, because right now a medication can be skipped when time runs out.
+- Also not taken: its suggestion to redesign the terminal output as a table. I kept the simple format and pasted the real `main.py` output into the README.
+
+I did not take the AI's first design as correct either. Its own initial design had flaws, such as `Owner.create_plan` making `Owner` and `Scheduler` depend on each other, and a `completed` flag that would stay true for a daily task the next day. Asking it to review its own work found them.
+
+**How I verified the result.**
+- I ran code instead of trusting the explanations. I created two identical "Walk" tasks to confirm they compare unequal and stay distinct in a set, and I ran a small scenario to see the plan the scheduler produced.
+- I wrote pytest tests, including one with two pets to check that the scheduler reads tasks from every pet and that the pets share one time budget. All five tests pass.
+- I ran `python main.py` and read the schedule against my expectations, for example that tasks landed at their preferred times and that the totals added up.
+- I compared the UML diagram with the code after each design change, so the two stayed in sync.
 
 ---
 
