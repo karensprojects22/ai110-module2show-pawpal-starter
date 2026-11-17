@@ -25,6 +25,7 @@ classDiagram
         +find_pet(pet_id) Pet
         +set_availability(minutes) void
         +get_all_tasks() list~Task~
+        +filter_tasks(pet_name, completed) list~Task~
     }
 
     class Pet {
@@ -37,6 +38,7 @@ classDiagram
         +list~Task~ tasks
         +add_task(task) void
         +remove_task(task_id) void
+        +complete_task(task_id, on_date) Task
         +edit_task(task_id, changes) void
         +get_tasks(completed) list~Task~
         +describe() str
@@ -53,7 +55,8 @@ classDiagram
         +Recurrence recurrence
         +date due_date
         +date last_completed
-        +mark_complete(on_date) void
+        -Pet _pet
+        +mark_complete(on_date) Task
         +is_due(on_date) bool
         +next_occurrence() Task
         +priority_score() int
@@ -64,6 +67,8 @@ classDiagram
         +dict constraints
         +generate_plan(on_date) DailyPlan
         +sort_tasks(tasks) list~Task~
+        +sort_by_time(tasks) list~Task~
+        +conflict_warnings(tasks) list~str~
         +detect_conflicts(items) list~tuple~
     }
 
@@ -83,21 +88,26 @@ classDiagram
         +date date
         +list~ScheduledItem~ scheduled_items
         +list~SkippedTask~ skipped_tasks
+        +list~str~ warnings
         +add_item(task, start, reason) void
         +total_duration() int
         +get_explanation() str
         +to_rows() list
     }
 
-    Owner "1" *-- "*" Pet : has
-    Pet "1" *-- "*" Task : has
-    Task ..> Pet : pet_id refers to
+    Owner "1" *-- "*" Pet : has (filter_tasks uses Pet.get_tasks)
+    Pet "1" *-- "*" Task : has (add_task sets pet_id and _pet)
+    Pet ..> Task : complete_task calls mark_complete
+    Task --> Pet : _pet.add_task queues the next occurrence
+    Task ..> Task : next_occurrence makes a copy
     Task --> Priority : uses
     Task --> Recurrence : uses
-    Scheduler --> Owner : schedules for
-    Scheduler ..> Task : sorts and filters
-    Scheduler ..> DailyPlan : produces
-    DailyPlan "1" *-- "*" ScheduledItem : contains
+    Scheduler --> Owner : reads get_all_tasks, find_pet, budget, day window
+    Scheduler ..> Task : sorts, places, checks for conflicts
+    Scheduler ..> DailyPlan : generate_plan builds
+    Scheduler ..> SkippedTask : records what did not fit
+    Scheduler ..> ScheduledItem : conflict_warnings and detect_conflicts compare
+    DailyPlan "1" *-- "*" ScheduledItem : contains (add_item creates)
     DailyPlan "1" *-- "*" SkippedTask : contains
     ScheduledItem --> Task : refers to
     SkippedTask --> Task : refers to
