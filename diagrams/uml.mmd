@@ -1,15 +1,85 @@
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
-    %% Keep this file updated so it matches your final implementation.
-
-    class ClassName {
-        +type attribute
-        +method() returnType
+    class Priority {
+        <<enumeration>>
+        HIGH
+        MEDIUM
+        LOW
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    class Recurrence {
+        <<enumeration>>
+        NONE
+        DAILY
+        WEEKLY
     }
 
-    ClassName --> AnotherClass : relationship
+    class Owner {
+        +str name
+        +int available_minutes_per_day
+        +dict preferences
+        +list~Pet~ pets
+        +add_pet(pet) void
+        +remove_pet(pet) void
+        +set_availability(minutes) void
+        +get_all_tasks() list~Task~
+        +create_plan(date) DailyPlan
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +str breed
+        +int age
+        +str special_needs
+        +list~Task~ tasks
+        +add_task(task) void
+        +remove_task(task) void
+        +edit_task(task, changes) void
+        +get_tasks(status) list~Task~
+        +describe() str
+    }
+
+    class Task {
+        +str title
+        +str category
+        +int duration_minutes
+        +Priority priority
+        +time preferred_time
+        +Recurrence recurrence
+        +bool completed
+        +mark_complete() void
+        +is_due(date) bool
+        +next_occurrence() Task
+        +priority_score() int
+    }
+
+    class Scheduler {
+        +Owner owner
+        +dict constraints
+        +generate_plan(date) DailyPlan
+        +sort_tasks(tasks) list~Task~
+        +fit_to_time_budget(tasks) list~Task~
+        +detect_conflicts(tasks) list~Task~
+        +explain(plan) str
+    }
+
+    class DailyPlan {
+        +date date
+        +list scheduled_items
+        +list skipped_tasks
+        +int total_minutes
+        +add_item(task, start) void
+        +total_duration() int
+        +get_explanation() str
+        +to_rows() list
+    }
+
+    Owner "1" *-- "*" Pet : has
+    Pet "1" *-- "*" Task : has
+    Task --> Priority : uses
+    Task --> Recurrence : uses
+    Scheduler --> Owner : schedules for
+    Scheduler ..> Task : sorts and filters
+    Scheduler ..> DailyPlan : produces
+    Owner ..> Scheduler : create_plan delegates to
+    DailyPlan "1" o-- "*" Task : contains
