@@ -41,6 +41,16 @@ Yes. After reviewing my skeleton I found several gaps and changed the design bef
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
 - How did you decide which constraints mattered most?
 
+The scheduler considers five things:
+
+- **Priority** (high, medium, low). It ranks tasks, so the most important ones get time first.
+- **The owner's daily time budget**, in minutes, shared by all pets. This is a hard limit: the plan never schedules more minutes than the owner has.
+- **The owner's day window** (`day_start` to `day_end`). Every task must fit inside it, with no overlaps.
+- **Preferred time.** A task gets its preferred time if that slot is free. This is a soft preference, not a rule.
+- **Due date and recurrence.** Only tasks that are due and not yet completed are planned.
+
+I ranked them by what goes wrong if they're ignored. Skipping a medication or a walk matters far more than skipping grooming, so priority comes first. The time budget is a hard limit because the owner really can't do more than they have time for. Preferred time is last because pet-care times are flexible: moving a walk by ten minutes costs little. The `Owner.preferences` dictionary and `Scheduler.constraints` exist in the classes but nothing reads them yet.
+
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
@@ -83,15 +93,41 @@ The most helpful prompts were specific and gave it something concrete to check, 
 
 - Accepted: tasks linked to their pet, task ids with identity-based equality, removing the circular `Owner.create_plan`, replacing `completed` with `last_completed` and `due_date`, a day window on `Owner`, scheduler results that keep reasons, and one source for the explanation.
 - Not taken: the smaller cleanups (renaming `DailyPlan.date`, dropping `priority_score`, changing `get_tasks` to a status enum) and the idea of a `required` flag so medication is never skipped. They didn't block the requirements, so I kept the scope smaller. The `required` flag is the one I'd add first, because right now a medication can be skipped when time runs out.
-- Also not taken: its suggestion to redesign the terminal output as a table. I kept the simple format and pasted the real `main.py` output into the README.
+- Handled differently: its suggestion to redesign the terminal output as a table. I kept the command-line output simple and pasted the real `main.py` output into the README, and used the table styling in the Streamlit app instead.
 
 I did not take the AI's first design as correct either. Its own initial design had flaws, such as `Owner.create_plan` making `Owner` and `Scheduler` depend on each other, and a `completed` flag that would stay true for a daily task the next day. Asking it to review its own work found them.
 
 **How I verified the result.**
 - I ran code instead of trusting the explanations. I created two identical "Walk" tasks to confirm they compare unequal and stay distinct in a set, and I ran a small scenario to see the plan the scheduler produced.
-- I wrote pytest tests, including one with two pets to check that the scheduler reads tasks from every pet and that the pets share one time budget. All five tests pass.
+- I wrote pytest tests, including one with two pets to check that the scheduler reads tasks from every pet and that the pets share one time budget. The full suite (61 tests) passes.
 - I ran `python main.py` and read the schedule against my expectations, for example that tasks landed at their preferred times and that the totals added up.
 - I compared the UML diagram with the code after each design change, so the two stayed in sync.
+
+**c. AI strategy**
+
+*Which assistant features were most effective for building the scheduler?*
+
+What I loved most was using the assistant to verify and check my code as I went, and to understand the codebase and the problem I was solving.
+
+- **Review and verification.** I asked it to review my skeleton before I wrote any logic, and it found real design flaws early. Later it ran small scenarios and my test suite against its own changes, which caught bugs I wouldn't have spotted by reading: a time budget that was spent on tasks that couldn't be placed, a Streamlit dropdown that returns a copy of an object so tasks were silently lost, and a task that accepted a negative duration. It also checked my UML against the code in both directions, so I could see exactly which methods were missing from the diagram.
+- **Explaining the code.** Questions like "how should the Scheduler retrieve all tasks from the Owner's pets?" got me pointed to the exact line that already did it, and I learned why the sort key is a tuple (so `None` is never compared with a time) and how `st.session_state` keeps the owner between reruns.
+- **Fast drafting of routine work.** Class stubs, docstrings, test scaffolding and README sections took minutes, which left my time for decisions.
+
+*One suggestion I rejected or modified to keep the design clean.*
+
+The design review gave me a long list. I took only the fixes that mattered for the system and left out the rest. I accepted the missing relationships and logic gaps, such as linking tasks to pets, giving tasks ids and replacing the `completed` flag with `last_completed`. I did not take the smaller cleanups or the idea of a `required` flag for medication. The biggest modification was where plan creation lives. The first brainstorm put `create_plan` on `Owner`, which made `Owner` and `Scheduler` depend on each other. I removed it so the `Scheduler` is the one place that plans, and it reads every pet's tasks only through `Owner.get_all_tasks()`. That kept `Owner` and `Pet` as simple data and made the scheduler easy to test.
+
+*How separate chat sessions for different phases helped me stay organized.*
+
+I kept design, implementation and testing in separate conversations. Each one stayed focused on a single question, so I wasn't scrolling through old discussion of the UML while debugging a test. Starting a fresh session also forced me to write a short hand-over note: what was done, which bugs were known, and what was covered. That meant the project files, the UML, the tests and the git history became the source of truth, and not the chat. The cost is that a new session doesn't remember earlier decisions, so the reasons for them have to be written down in the reflection, the commit messages and the README.
+
+*What I learned about being the "lead architect" with powerful AI tools.*
+
+- **I decide, the AI proposes.** The assistant can produce a working class, a diagram or a feature in seconds, but choosing which classes exist, who owns what and what to leave out stayed my job.
+- **Confident output is not correct output.** Some of the AI's own first design was wrong. The way to find out was to run it, test it and ask for a review, not to read it and nod.
+- **Verify before trusting, and test the edges.** The bugs it found were in boundaries and unusual cases: budgets, midnight, month ends and empty input.
+- **Keep the scope small and the design documented.** Saying "only these fixes" kept the project finishable, and updating the UML and README after each change kept them honest.
+- **Keep control of what leaves your machine.** I decided what got committed and pushed, and when I didn't want a push to `main` to stand I had it undone.
 
 ---
 
@@ -102,10 +138,31 @@ I did not take the AI's first design as correct either. Its own initial design h
 - What behaviors did you test?
 - Why were these tests important?
 
+I wrote 61 pytest tests in three files (`tests/test_pawpal.py`, `tests/test_scheduler.py` and `tests/test_edge_cases.py`). They cover:
+
+- **Sorting.** Tasks come back in clock order with untimed ones last, ties go to the shorter task, equal tasks keep their order, midnight counts as a real time, and the input list isn't changed. The finished plan is always in chronological order, and priority beats time of day.
+- **Recurring tasks.** Completing a daily or weekly task creates the next one, due one or seven days later, including across month ends, year ends and a leap day. They also cover late completion, completing twice, one-off tasks, removed tasks, and a successor that is a separate copy and stays out of the plan until its due date.
+- **Conflict detection.** Overlapping and identical times produce warnings labeled same pet or different pets, back-to-back tasks don't, odd input doesn't crash, and the final plan has no overlaps.
+- **Scheduling limits.** Pets share one budget, a zero budget skips everything, a task that exactly fills the budget fits, tasks ending exactly at the end of the day fit but one minute more doesn't, and a task that can't be placed no longer uses up budget.
+- **Validation.** Zero or negative durations and negative budgets are rejected.
+
+These matter because a scheduler can quietly produce a wrong plan without any error, and the failures hide at boundaries, like the end of a month or the last minute of the day. The tests also caught real bugs: the budget leak and the missing duration check.
+
 **b. Confidence**
 
 - How confident are you that your scheduler works correctly?
 - What edge cases would you test next if you had more time?
+
+I'm fairly confident, about 4 out of 5, in the scheduling logic itself: the 61 tests pass, and I wrote tests for the bugs the AI review found. I'm less sure about the Streamlit app, which I checked only by running it through Streamlit's headless test runner, not by clicking through it in a browser. Nothing is saved between sessions, so I haven't tested persistence at all.
+
+With more time I would test:
+
+- tasks that must not move (a fixed vet visit or medication), once that feature exists
+- a task that runs past the end of the day, and a day window that changes between runs
+- tasks that were due yesterday and weren't done (overdue handling)
+- many pets and many tasks at once
+- weekly tasks tied to particular weekdays
+- the UI in a real browser, including editing and removing tasks
 
 ---
 
@@ -115,10 +172,21 @@ I did not take the AI's first design as correct either. Its own initial design h
 
 - What part of this project are you most satisfied with?
 
+I'm most satisfied with reviewing the design before writing the logic. Finding the problems in my skeleton (tasks that didn't know their pet, a completed flag that broke recurring tasks, and a circular dependency) cost minutes then, and would have cost much more once the scheduler was built on top of them. I'm also happy that the scheduler explains itself: every scheduled task says why it landed where it did, and every skipped task says why it didn't fit. The test suite gives me real confidence in changing the code.
+
 **b. What you would improve**
 
 - If you had another iteration, what would you improve or redesign?
 
+- Add a `required` or fixed flag so medication and appointments are never skipped or moved, and let the owner choose which task yields in a conflict.
+- Save the owner, pets and tasks to a file so they survive a restart.
+- Handle overdue tasks, so a daily task missed yesterday shows up as overdue instead of disappearing.
+- Replace the greedy fit with something that can swap a long task for several shorter ones when that fits more of the day.
+- Either use the `Owner.preferences` and `Scheduler.constraints` fields (for example for buffer time between tasks) or remove them.
+- Let the app edit and delete tasks, not just add and complete them.
+
 **c. Key takeaway**
 
 - What is one important thing you learned about designing systems or working with AI on this project?
+
+Working with AI made me the lead architect, and that meant owning the decisions. The assistant is very fast at producing code, and it is also confident when it is wrong, so the real work was deciding what to build, keeping the scope small, and checking everything with tests and review. Designing the system first, then fixing the design before the logic, kept the project simple. Good tools made me think more about the design, not less.
