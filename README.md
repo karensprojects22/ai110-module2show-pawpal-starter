@@ -22,6 +22,25 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Features
+
+- **Multiple pets, one plan.** An owner has many pets, and each pet has its own tasks. The scheduler reads all of them through `Owner.get_all_tasks()` and plans them together against one shared daily time budget.
+- **Priority-first scheduling.** Tasks are ranked by priority (high, medium, low), then by preferred time, then shortest first. The most important tasks get the time budget and the best slots first.
+- **Daily time budget.** The plan never schedules more minutes than the owner has available. Minutes are spent only on tasks that actually get a slot, so a task that can't be placed never blocks a smaller one.
+- **Smart time placement.** A task with a preferred time gets it when that slot is free. Otherwise it moves to the nearest free slot, and a task with no preferred time takes the earliest free slot, all inside the owner's day window.
+- **Sorting by time.** The task list is ordered by preferred time, with untimed tasks last, and the finished plan is always in chronological order.
+- **Filtering.** View tasks by pet name, by completion status, or both.
+- **Conflict warnings.** If two tasks, for the same pet or different pets, have overlapping preferred times, the app shows a warning that names both and says "same pet" or "different pets". The scheduler then moves one of them so the final plan has no overlaps. Checking never crashes the app.
+- **Daily and weekly recurrence.** Completing a recurring task creates the next occurrence on the same pet, due one day or seven days later. Completing it twice does not create a second copy.
+- **Plan explanations.** Every scheduled task says why it was placed where it was, and every skipped task says why it didn't fit (over budget, or no free slot).
+- **Input validation.** Task durations must be at least 1 minute, and the daily time budget can't be negative.
+- **Streamlit interface.** Add pets and tasks, set a preferred time and repeat schedule, mark tasks complete, filter the list, and generate a plan with summary metrics, a schedule table and warnings.
+- **Tested.** A pytest suite of 61 tests covers sorting, recurrence, conflicts, budget handling and validation (see [Testing PawPal+](#-testing-pawpal)).
+
+**Known limits:** scheduling is greedy, so one long high-priority task can crowd out several shorter, lower-priority ones. Conflict warnings look only at tasks with a preferred time, and the scheduler assumes the owner does one thing at a time. Data lives in the browser session and isn't saved between sessions.
+
+For the method behind each feature, see [Smarter Scheduling](#-smarter-scheduling).
+
 ## Implementation summary
 
 The core logic lives in `pawpal_system.py`. `main.py` is a demo script that builds an owner with two pets and prints today's schedule, and `tests/` holds the pytest suite. The class diagram is in `diagrams/uml.mmd`.
@@ -76,13 +95,13 @@ As added (out of order):
   12:30  Training session     Biscuit  pending
   18:00  Flea treatment       Biscuit  pending
   07:00  Breakfast            Biscuit  done
-  07:00  Breakfast            Biscuit  pending, due 2026-11-17
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
   12:30  Feather wand play    Mochi    pending
   08:00  Thyroid medication   Mochi    pending
 
 Sorted by time:
   07:00  Breakfast            Biscuit  done
-  07:00  Breakfast            Biscuit  pending, due 2026-11-17
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
   07:30  Morning walk         Biscuit  pending
   08:00  Thyroid medication   Mochi    pending
   12:30  Feather wand play    Mochi    pending
@@ -99,7 +118,7 @@ Filtered: completed only
   07:00  Breakfast            Biscuit  done
 
 Filtered: pending only, sorted by time
-  07:00  Breakfast            Biscuit  pending, due 2026-11-17
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
   07:30  Morning walk         Biscuit  pending
   08:00  Thyroid medication   Mochi    pending
   12:30  Feather wand play    Mochi    pending
@@ -109,7 +128,7 @@ Filtered: pending only, sorted by time
    any   Refill water bowl    Biscuit  pending
 
 Filtered: pet = Biscuit and pending, sorted by time
-  07:00  Breakfast            Biscuit  pending, due 2026-11-17
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
   07:30  Morning walk         Biscuit  pending
   12:30  Training session     Biscuit  pending
   18:00  Flea treatment       Biscuit  pending
@@ -117,7 +136,7 @@ Filtered: pet = Biscuit and pending, sorted by time
    any   Refill water bowl    Biscuit  pending
 
 ============================================================
-Today's Schedule - Monday, November 16, 2026
+Today's Schedule - Tuesday, November 17, 2026
 Owner: Karen | Pets: Biscuit, Mochi
 ------------------------------------------------------------
 07:00-07:05  Refill water bowl    [Biscuit, low]
@@ -224,12 +243,115 @@ Warning: time conflict - Flea treatment (Biscuit) at 18:00 overlaps Brush coat (
 
 ## 📸 Demo Walkthrough
 
-Describe your app in numbered steps so a reader can follow along without watching a video:
+PawPal+ has a Streamlit app (`streamlit run app.py`) and a command-line demo (`python main.py`). Both use the same classes in `pawpal_system.py`.
 
-1. <!-- Describe this step -->
-2. <!-- Describe this step -->
-3. <!-- Describe this step -->
-4. <!-- Describe this step -->
-5. <!-- Add more steps as needed -->
+### What you can do in the app
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+- **Owner:** set your name and how many minutes you have available today.
+- **Add a pet:** enter a name and species. Each pet appears with an icon and a one-line summary.
+- **Add a task:** choose the pet, a title, category, duration, priority and how often it repeats (none, daily or weekly). Optionally set a preferred time.
+- **Mark a task complete:** pick a task and click the button. A daily or weekly task creates its next occurrence automatically.
+- **Review your tasks:** summary tiles show pets, pending tasks, minutes needed today and minutes available. The task table is sorted by preferred time, and you can filter it by pet and by status (all, pending or completed).
+- **Build the schedule:** click "Generate schedule" to see today's plan, with a reason for every task, a list of anything that didn't fit, and a "Why this plan?" explanation. The plan stays on screen and updates as you change things.
+
+### Example workflow
+
+1. **Set your time.** Enter 60 minutes in "Time available today".
+2. **Add two pets.** Add Biscuit (dog) and Mochi (cat). Both appear under the form with a short summary.
+3. **Add tasks with preferred times.** Give Biscuit a 30-minute "Morning walk" (high priority, daily, 08:00). Give Mochi a 5-minute "Thyroid medication" (high priority, daily, 08:00). Give Biscuit a 45-minute "Brush coat" (low priority, weekly, 18:00).
+4. **Read the warnings before scheduling.** The summary tiles show 80 minutes needed against 60 available, with a warning that lower-priority tasks will be skipped. A second warning flags the clash: *Thyroid medication (Mochi) at 08:00 overlaps Morning walk (Biscuit) at 08:00 (different pets)*.
+5. **Generate the schedule.** The banner reads "Scheduled 2 of 3 task(s)". The medication is at 08:00-08:05, and the walk was moved to 08:05-08:35, the nearest free slot. A note says the conflict was resolved. "Brush coat" is listed as not scheduled because it needs 45 minutes and only 25 were left.
+6. **Complete a task.** Mark "Morning walk" complete. The app confirms and creates tomorrow's walk, and the plan updates.
+
+### Scheduler behavior on display
+
+- **Sorting:** the task table is ordered by preferred time (untimed tasks last), and the plan is ranked by priority first.
+- **Filtering:** by pet and by status, in the app and in the CLI demo below.
+- **Conflict warnings:** overlapping preferred times are flagged before and after generating, labeled "same pet" or "different pets", and then resolved so the final plan has no overlaps.
+- **Time budget:** tasks that don't fit are skipped with a stated reason, such as over budget or no free slot.
+- **Recurrence:** completing a daily or weekly task queues the next one, due one day or seven days later.
+- **Explanations:** every scheduled task says why it was placed where it was.
+
+### Command-line demo
+
+`python main.py` builds an owner with two pets and a set of tasks added out of order. It then prints the sorted and filtered task lists and today's schedule, including two conflicts: one between different pets (12:30) and one for the same pet (18:00). Breakfast is completed on purpose to show the next daily occurrence appear, due the following day. Dates in the output match the day it was run.
+
+```
+============================================================
+Sorting and filtering check
+============================================================
+
+As added (out of order):
+  18:00  Brush coat           Biscuit  pending
+   any   Refill water bowl    Biscuit  pending
+  07:30  Morning walk         Biscuit  pending
+  12:30  Training session     Biscuit  pending
+  18:00  Flea treatment       Biscuit  pending
+  07:00  Breakfast            Biscuit  done
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
+  12:30  Feather wand play    Mochi    pending
+  08:00  Thyroid medication   Mochi    pending
+
+Sorted by time:
+  07:00  Breakfast            Biscuit  done
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
+  07:30  Morning walk         Biscuit  pending
+  08:00  Thyroid medication   Mochi    pending
+  12:30  Feather wand play    Mochi    pending
+  12:30  Training session     Biscuit  pending
+  18:00  Flea treatment       Biscuit  pending
+  18:00  Brush coat           Biscuit  pending
+   any   Refill water bowl    Biscuit  pending
+
+Filtered: pet = Mochi
+  12:30  Feather wand play    Mochi    pending
+  08:00  Thyroid medication   Mochi    pending
+
+Filtered: completed only
+  07:00  Breakfast            Biscuit  done
+
+Filtered: pending only, sorted by time
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
+  07:30  Morning walk         Biscuit  pending
+  08:00  Thyroid medication   Mochi    pending
+  12:30  Feather wand play    Mochi    pending
+  12:30  Training session     Biscuit  pending
+  18:00  Flea treatment       Biscuit  pending
+  18:00  Brush coat           Biscuit  pending
+   any   Refill water bowl    Biscuit  pending
+
+Filtered: pet = Biscuit and pending, sorted by time
+  07:00  Breakfast            Biscuit  pending, due 2026-11-18
+  07:30  Morning walk         Biscuit  pending
+  12:30  Training session     Biscuit  pending
+  18:00  Flea treatment       Biscuit  pending
+  18:00  Brush coat           Biscuit  pending
+   any   Refill water bowl    Biscuit  pending
+
+============================================================
+Today's Schedule - Tuesday, November 17, 2026
+Owner: Karen | Pets: Biscuit, Mochi
+------------------------------------------------------------
+07:00-07:05  Refill water bowl    [Biscuit, low]
+             why: low priority, placed in the earliest free slot
+07:30-08:00  Morning walk         [Biscuit, high]
+             why: high priority, scheduled at its preferred time
+08:00-08:05  Thyroid medication   [Mochi, high]
+             why: high priority, scheduled at its preferred time
+12:30-12:45  Feather wand play    [Mochi, medium]
+             why: medium priority, scheduled at its preferred time
+12:45-13:05  Training session     [Biscuit, medium]
+             why: medium priority, moved to the nearest free slot (preferred time was unavailable)
+18:00-18:05  Flea treatment       [Biscuit, medium]
+             why: medium priority, scheduled at its preferred time
+18:05-18:25  Brush coat           [Biscuit, low]
+             why: low priority, moved to the nearest free slot (preferred time was unavailable)
+
+Warning: time conflict - Feather wand play (Mochi) at 12:30 overlaps Training session (Biscuit) at 12:30 (different pets)
+
+Warning: time conflict - Flea treatment (Biscuit) at 18:00 overlaps Brush coat (Biscuit) at 18:00 (same pet)
+------------------------------------------------------------
+Total: 100 of 120 min
+```
+
+**Screenshot or video** *(optional)*: none included. The steps and output above describe the demo.
