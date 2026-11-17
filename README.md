@@ -160,7 +160,9 @@ Add `-v` to list every test, or `-k sort` to run only tests whose names match a 
 - **Scheduling limits:** the shared time budget across pets, an empty owner, a zero budget, exact-fit tasks, the day-window edges, and many tasks wanting the same time.
 - **Basic behavior:** adding tasks to a pet, marking tasks complete, and filtering by pet and by status.
 
-The 2 `xfailed` tests are known bugs I wrote tests for but haven't fixed: the daily time budget is spent on tasks that can't be placed, and a task accepts a negative duration. The tests are marked as expected failures, so they pass the suite, and they will fail loudly when the bugs are fixed.
+**Input validation:** a task with a zero or negative duration raises `ValueError` (at creation and when edited), and so does a negative daily time budget.
+
+**Budget accounting:** minutes are spent only for tasks that are actually placed, so a task that can't be placed never uses up budget that a smaller task could have had.
 
 Test output:
 
@@ -169,13 +171,13 @@ Test output:
 platform darwin -- Python 3.13.15, pytest-9.2.0, pluggy-1.7.0
 rootdir: .../ai110-module2show-pawpal-starter
 plugins: anyio-4.15.1
-collected 52 items
+collected 61 items
 
-tests/test_edge_cases.py .........................xx                     [ 51%]
-tests/test_pawpal.py ......................                              [ 94%]
+tests/test_edge_cases.py ....................................            [ 59%]
+tests/test_pawpal.py ......................                              [ 95%]
 tests/test_scheduler.py ...                                              [100%]
 
-======================== 50 passed, 2 xfailed in 0.04s =========================
+============================== 61 passed in 0.03s ==============================
 ```
 
 ## 📐 Smarter Scheduling
@@ -199,7 +201,7 @@ Each feature below names the method that implements it. `python main.py` prints 
 - `completed=True` keeps tasks completed at least once, `False` keeps the rest, and `None` keeps both.
 - The two filters combine, for example `owner.filter_tasks(pet_name="Biscuit", completed=False)`.
 
-`Pet.get_tasks(completed)` does the same for a single pet. Separately, `Scheduler.fit_to_time_budget(tasks)` drops tasks that don't fit the owner's daily minutes and records a reason for each.
+`Pet.get_tasks(completed)` does the same for a single pet. Separately, `Scheduler.generate_plan` applies the owner's daily minutes as it places each task. Minutes are spent only when a task is actually placed, and every task left out is recorded with a reason (over budget, or no free slot in the day window).
 
 ### Conflict detection
 
