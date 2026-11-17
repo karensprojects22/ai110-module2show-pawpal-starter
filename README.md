@@ -144,18 +144,38 @@ Total: 100 of 120 min
 
 ## 🧪 Testing PawPal+
 
+Run the full suite from the project root:
+
 ```bash
-# Run the full test suite:
-pytest
-
-# Run with coverage:
-pytest --cov
+python -m pytest
 ```
 
-Sample test output:
+Add `-v` to list every test, or `-k sort` to run only tests whose names match a word.
+
+**What the tests cover** (`tests/`):
+
+- **Sorting:** `Scheduler.sort_by_time` returns tasks in clock order with untimed tasks last. Ties, empty lists, midnight, stability and not changing the input list are covered, and so are the finished plan's chronological order and priority-first ordering in `sort_tasks`.
+- **Recurring tasks:** completing a daily or weekly task creates the next occurrence on the same pet, due one day or seven days later. Calendar boundaries (month end, year end, leap day), late completion, completing twice, one-off tasks and removed tasks are covered.
+- **Conflict detection:** tasks with identical or overlapping times produce warnings that say "same pet" or "different pets". Back-to-back tasks are not flagged, and odd input doesn't raise an error. The plan still has no overlaps.
+- **Scheduling limits:** the shared time budget across pets, an empty owner, a zero budget, exact-fit tasks, the day-window edges, and many tasks wanting the same time.
+- **Basic behavior:** adding tasks to a pet, marking tasks complete, and filtering by pet and by status.
+
+The 2 `xfailed` tests are known bugs I wrote tests for but haven't fixed: the daily time budget is spent on tasks that can't be placed, and a task accepts a negative duration. The tests are marked as expected failures, so they pass the suite, and they will fail loudly when the bugs are fixed.
+
+Test output:
 
 ```
-# Paste your pytest output here
+============================= test session starts ==============================
+platform darwin -- Python 3.13.15, pytest-9.2.0, pluggy-1.7.0
+rootdir: .../ai110-module2show-pawpal-starter
+plugins: anyio-4.15.1
+collected 52 items
+
+tests/test_edge_cases.py .........................xx                     [ 51%]
+tests/test_pawpal.py ......................                              [ 94%]
+tests/test_scheduler.py ...                                              [100%]
+
+======================== 50 passed, 2 xfailed in 0.04s =========================
 ```
 
 ## 📐 Smarter Scheduling
