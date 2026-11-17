@@ -16,16 +16,19 @@ classDiagram
     class Owner {
         +str name
         +int available_minutes_per_day
+        +time day_start
+        +time day_end
         +dict preferences
         +list~Pet~ pets
         +add_pet(pet) void
-        +remove_pet(pet) void
+        +remove_pet(pet_id) void
+        +find_pet(pet_id) Pet
         +set_availability(minutes) void
         +get_all_tasks() list~Task~
-        +create_plan(date) DailyPlan
     }
 
     class Pet {
+        +str id
         +str name
         +str species
         +str breed
@@ -33,22 +36,25 @@ classDiagram
         +str special_needs
         +list~Task~ tasks
         +add_task(task) void
-        +remove_task(task) void
-        +edit_task(task, changes) void
-        +get_tasks(status) list~Task~
+        +remove_task(task_id) void
+        +edit_task(task_id, changes) void
+        +get_tasks(completed) list~Task~
         +describe() str
     }
 
     class Task {
+        +str id
+        +str pet_id
         +str title
         +str category
         +int duration_minutes
         +Priority priority
         +time preferred_time
         +Recurrence recurrence
-        +bool completed
-        +mark_complete() void
-        +is_due(date) bool
+        +date due_date
+        +date last_completed
+        +mark_complete(on_date) void
+        +is_due(on_date) bool
         +next_occurrence() Task
         +priority_score() int
     }
@@ -56,19 +62,29 @@ classDiagram
     class Scheduler {
         +Owner owner
         +dict constraints
-        +generate_plan(date) DailyPlan
+        +generate_plan(on_date) DailyPlan
         +sort_tasks(tasks) list~Task~
-        +fit_to_time_budget(tasks) list~Task~
-        +detect_conflicts(tasks) list~Task~
-        +explain(plan) str
+        +fit_to_time_budget(tasks) tuple
+        +detect_conflicts(items) list~tuple~
+    }
+
+    class ScheduledItem {
+        +Task task
+        +time start
+        +time end
+        +str reason
+    }
+
+    class SkippedTask {
+        +Task task
+        +str reason
     }
 
     class DailyPlan {
         +date date
-        +list scheduled_items
-        +list skipped_tasks
-        +int total_minutes
-        +add_item(task, start) void
+        +list~ScheduledItem~ scheduled_items
+        +list~SkippedTask~ skipped_tasks
+        +add_item(task, start, reason) void
         +total_duration() int
         +get_explanation() str
         +to_rows() list
@@ -76,10 +92,13 @@ classDiagram
 
     Owner "1" *-- "*" Pet : has
     Pet "1" *-- "*" Task : has
+    Task ..> Pet : pet_id refers to
     Task --> Priority : uses
     Task --> Recurrence : uses
     Scheduler --> Owner : schedules for
     Scheduler ..> Task : sorts and filters
     Scheduler ..> DailyPlan : produces
-    Owner ..> Scheduler : create_plan delegates to
-    DailyPlan "1" o-- "*" Task : contains
+    DailyPlan "1" *-- "*" ScheduledItem : contains
+    DailyPlan "1" *-- "*" SkippedTask : contains
+    ScheduledItem --> Task : refers to
+    SkippedTask --> Task : refers to
